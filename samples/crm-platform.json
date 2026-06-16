@@ -1,0 +1,6 @@
+{
+  "title": "CRM platform",
+  "prompt": "Design a CRM platform for sales and customer success with tenant isolation, lead ingestion, workflow automation, reporting dashboards, audit logs, and role-based access.",
+  "patterns": ["multi-tenant SaaS", "workflow automation", "analytics dashboards"],
+  "integrations": ["email", "calendar", "customer data sync"]
+}

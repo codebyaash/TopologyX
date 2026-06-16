@@ -1,0 +1,6 @@
+{
+  "title": "Insurance claims workflow",
+  "prompt": "Design an insurance claims processing workflow with FNOL intake, document uploads, fraud checks, adjuster assignment, policy lookup, secure customer communications, and payout approvals.",
+  "patterns": ["case management", "document workflow", "fraud review"],
+  "compliance": ["PII handling", "audit trail"]
+}

@@ -1,0 +1,7 @@
+{
+  "title": "Fintech payment processing platform",
+  "prompt": "Design a fintech payment processing platform with PCI-minded controls, ledger storage, event streaming, fraud monitoring, and high availability.",
+  "compliance": ["PCI-minded controls"],
+  "patterns": ["ledger", "audit trail", "fraud event stream"]
+}
+

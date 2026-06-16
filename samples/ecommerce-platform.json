@@ -1,0 +1,6 @@
+{
+  "title": "Event-driven ecommerce platform",
+  "prompt": "Design an event-driven ecommerce platform for flash sales with inventory updates, checkout, fraud checks, and order fulfillment.",
+  "patterns": ["event-driven", "CQRS", "queue-based load leveling"]
+}
+

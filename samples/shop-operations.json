@@ -1,0 +1,6 @@
+{
+  "title": "Shop operations platform",
+  "prompt": "Design a shop operations platform connecting catalog, inventory sync, order orchestration, returns processing, warehouse updates, customer notifications, and finance reconciliation.",
+  "patterns": ["order orchestration", "inventory sync", "event-driven workflows"],
+  "integrations": ["warehouse management", "payments", "notifications"]
+}
