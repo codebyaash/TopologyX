@@ -2,8 +2,9 @@ import os
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
+from app.config import settings
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./architecture_copilot.db")
+DATABASE_URL = settings.database_url
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=connect_args)

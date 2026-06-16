@@ -27,6 +27,13 @@ export type SecurityFinding = {
   remediation: string;
 };
 
+export type SecurityProfile = {
+  compliancePacks: string[];
+  identityStrategy: string;
+  networkBoundary: string;
+  policyRecommendations: string[];
+};
+
 export type CostLineItem = {
   service: string;
   assumption: string;
@@ -42,7 +49,17 @@ export type DeploymentComponent = {
   dependsOn: string[];
 };
 
+export type IacModule = {
+  name: string;
+  scope: "Foundation" | "Network" | "Identity" | "Data" | "Application" | "Observability" | "Policy" | "AI" | "IoT";
+  purpose: string;
+  resources: string[];
+  dependsOn: string[];
+};
+
 export type ArchitectureOutput = {
+  generationSource?: "deterministic" | "ai";
+  generationNotes?: string[];
   summary: string;
   services: ServiceRecommendation[];
   deployment: DeploymentComponent[];
@@ -54,6 +71,7 @@ export type ArchitectureOutput = {
     nodes: Node[];
     edges: Edge[];
   };
+  securityProfile: SecurityProfile;
   securityFindings: SecurityFinding[];
   costEstimate: {
     monthlyUsd: number;
@@ -64,10 +82,42 @@ export type ArchitectureOutput = {
     bicep: string;
     terraform: string;
   };
+  iacStructure: {
+    modules: IacModule[];
+    deploymentOrder: string[];
+  };
 };
 
 export type SampleScenario = {
   title: string;
   prompt: string;
   tag: string;
+};
+
+export type ProjectSummary = {
+  id: number;
+  name: string;
+  description: string | null;
+  userId: number;
+  createdAt: string;
+  latestRequestAt: string | null;
+  requestCount: number;
+};
+
+export type SavedArchitectureRun = {
+  id: number;
+  projectId: number;
+  prompt: string;
+  createdAt: string;
+  output: ArchitectureOutput;
+};
+
+export type ProjectDetail = ProjectSummary & {
+  history: SavedArchitectureRun[];
+};
+
+export type AuthUser = {
+  id: number;
+  email: string;
+  createdAt: string;
 };

@@ -1,19 +1,21 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { toPng } from "html-to-image";
 import Link from "next/link";
-import React, { useMemo, useState } from "react";
-import ReactFlow, { Background, Controls, MiniMap } from "reactflow";
-import { AlertTriangle, ArrowLeft, Braces, CloudCog, Download, FileCode2, GitCompareArrows, Layers3, Loader2, Network, Play, ShieldCheck, WalletCards } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactFlow, { Background, Controls, Handle, MiniMap, Position, type NodeProps } from "reactflow";
+import { Activity, AlertTriangle, ArrowLeft, Braces, CloudCog, Database, Download, FileCode2, FolderKanban, GitCompareArrows, Globe, HardDrive, History, KeyRound, Layers3, Loader2, LogIn, LogOut, Network, Play, ServerCog, ShieldCheck, Sparkles, UserRound, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { generateArchitecture } from "@/lib/architecture-engine";
 import { sampleScenarios } from "@/lib/samples";
-import type { ArchitectureOutput, Severity } from "@/lib/types";
-import { architectureToMarkdown, createArchitecture, downloadText } from "@/services/architecture";
+import type { ArchitectureOutput, AuthUser, ProjectDetail, ProjectSummary, Severity } from "@/lib/types";
+import { architectureToMarkdown, createAndSaveArchitecture, createProject, downloadText, getCurrentUser, getProject, listProjects, login, logout, register } from "@/services/architecture";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
@@ -37,6 +39,8 @@ const mutedPanelClassName = "rounded-lg border border-slate-200/80 bg-slate-50/9
 const selectClassName =
   "h-10 rounded-md border border-slate-200/80 bg-white/80 px-3 text-sm text-slate-800 outline-none transition focus-visible:ring-2 focus-visible:ring-ring";
 type RecommendationKey = "recommendation1" | "recommendation2" | "recommendation3";
+type TrafficProfile = "steady" | "growth" | "burst";
+type ObservabilityDepth = "lean" | "standard" | "deep";
 type ProfileService = ArchitectureOutput["services"][number];
 type RecommendationProfile = {
   key: RecommendationKey;
@@ -45,6 +49,89 @@ type RecommendationProfile = {
   services: ProfileService[];
   totalMonthlyUsd: number;
 };
+
+function diagramNodeTone(label: string) {
+  const text = label.toLowerCase();
+
+  if (text.includes("front door") || text.includes("client") || text.includes("user")) {
+    return {
+      icon: Globe,
+      chip: "Ingress",
+      iconClassName: "bg-sky-500/12 text-sky-700",
+      borderClassName: "border-sky-200/80",
+    };
+  }
+  if (text.includes("api") || text.includes("function")) {
+    return {
+      icon: ServerCog,
+      chip: "Application",
+      iconClassName: "bg-violet-500/12 text-violet-700",
+      borderClassName: "border-violet-200/80",
+    };
+  }
+  if (text.includes("service bus")) {
+    return {
+      icon: Activity,
+      chip: "Messaging",
+      iconClassName: "bg-amber-500/12 text-amber-700",
+      borderClassName: "border-amber-200/80",
+    };
+  }
+  if (text.includes("sql")) {
+    return {
+      icon: Database,
+      chip: "Data",
+      iconClassName: "bg-emerald-500/12 text-emerald-700",
+      borderClassName: "border-emerald-200/80",
+    };
+  }
+  if (text.includes("storage")) {
+    return {
+      icon: HardDrive,
+      chip: "Storage",
+      iconClassName: "bg-teal-500/12 text-teal-700",
+      borderClassName: "border-teal-200/80",
+    };
+  }
+  if (text.includes("key vault") || text.includes("private")) {
+    return {
+      icon: KeyRound,
+      chip: "Security",
+      iconClassName: "bg-rose-500/12 text-rose-700",
+      borderClassName: "border-rose-200/80",
+    };
+  }
+
+  return {
+    icon: Network,
+    chip: "Platform",
+    iconClassName: "bg-slate-500/12 text-slate-700",
+    borderClassName: "border-slate-200/80",
+  };
+}
+
+function DiagramNodeCard({ data }: NodeProps<{ label: string }>) {
+  const tone = diagramNodeTone(data.label);
+  const Icon = tone.icon;
+
+  return (
+    <div className={`min-w-[210px] rounded-lg border bg-white/95 px-4 py-3 shadow-[0_16px_36px_rgba(15,23,42,0.10)] backdrop-blur ${tone.borderClassName}`}>
+      <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-0 !bg-slate-300" />
+      <div className="flex items-start gap-3">
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${tone.iconClassName}`}>
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold leading-5 text-slate-900">{data.label}</p>
+          <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">{tone.chip}</p>
+        </div>
+      </div>
+      <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-0 !bg-slate-300" />
+    </div>
+  );
+}
+
+const memoizedNodeTypes = { architectureNode: DiagramNodeCard };
 
 function Stat({ label, value, icon: Icon }: { label: string; value: string; icon: React.ElementType }) {
   return (
@@ -131,13 +218,54 @@ function buildRecommendationProfiles(output: ArchitectureOutput): Recommendation
   ];
 }
 
+function serviceMultiplier(service: string, trafficProfile: TrafficProfile, regionCount: number, observabilityDepth: ObservabilityDepth) {
+  const normalized = service.toLowerCase();
+  let multiplier = 1;
+
+  if (normalized.includes("front door") || normalized.includes("api") || normalized.includes("functions") || normalized.includes("service bus")) {
+    multiplier *= trafficProfile === "burst" ? 1.45 : trafficProfile === "growth" ? 1.2 : 1;
+  }
+
+  if (normalized.includes("sql") || normalized.includes("storage") || normalized.includes("private endpoint") || normalized.includes("virtual network")) {
+    multiplier *= 1 + (regionCount - 1) * 0.32;
+  }
+
+  if (normalized.includes("monitor") || normalized.includes("insights")) {
+    multiplier *= observabilityDepth === "deep" ? 1.7 : observabilityDepth === "standard" ? 1.15 : 0.8;
+  }
+
+  if (normalized.includes("defender")) {
+    multiplier *= regionCount > 1 ? 1.15 : 1;
+  }
+
+  return multiplier;
+}
+
 export function ArchitectureCopilot() {
+  const apiEnabled = Boolean(process.env.NEXT_PUBLIC_API_URL);
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [output, setOutput] = useState<ArchitectureOutput>(() => generateArchitecture(defaultPrompt));
   const [isLoading, setIsLoading] = useState(false);
   const [codeKind, setCodeKind] = useState<"bicep" | "terraform">("bicep");
   const [recommendationKey, setRecommendationKey] = useState<RecommendationKey>("recommendation1");
   const [showComparison, setShowComparison] = useState(false);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | "">("");
+  const [activeProject, setActiveProject] = useState<ProjectDetail | null>(null);
+  const [projectName, setProjectName] = useState("");
+  const [projectDescription, setProjectDescription] = useState("");
+  const [projectStatus, setProjectStatus] = useState<string | null>(null);
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authStatus, setAuthStatus] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [trafficProfile, setTrafficProfile] = useState<TrafficProfile>("steady");
+  const [regionCount, setRegionCount] = useState(1);
+  const [observabilityDepth, setObservabilityDepth] = useState<ObservabilityDepth>("standard");
+  const diagramRef = useRef<HTMLDivElement | null>(null);
 
   const criticalCount = useMemo(() => output.securityFindings.filter((item) => item.severity === "Critical" || item.severity === "High").length, [output]);
   const code = codeKind === "bicep" ? output.iac.bicep : output.iac.terraform;
@@ -155,14 +283,209 @@ export function ArchitectureCopilot() {
       })),
     [activeProfile]
   );
+  const adjustedCostItems = useMemo(
+    () =>
+      activeCostItems.map((item) => ({
+        ...item,
+        monthlyUsd: Math.round(item.monthlyUsd * serviceMultiplier(item.service, trafficProfile, regionCount, observabilityDepth))
+      })),
+    [activeCostItems, observabilityDepth, regionCount, trafficProfile]
+  );
+  const adjustedMonthlyTotal = useMemo(() => adjustedCostItems.reduce((sum, item) => sum + item.monthlyUsd, 0), [adjustedCostItems]);
+  const baselineMonthlyTotal = useMemo(() => activeCostItems.reduce((sum, item) => sum + item.monthlyUsd, 0), [activeCostItems]);
+  const diagramNodes = useMemo(
+    () =>
+      output.diagram.nodes.map((node) => ({
+        ...node,
+        type: "architectureNode",
+      })),
+    [output.diagram.nodes]
+  );
+  const diagramEdges = useMemo(
+    () =>
+      output.diagram.edges.map((edge) => ({
+        ...edge,
+        type: "smoothstep",
+        style: { stroke: "#94a3b8", strokeWidth: 1.5 },
+        animated: edge.animated,
+      })),
+    [output.diagram.edges]
+  );
+
+  const refreshProjects = useCallback(async (nextSelectedId?: number) => {
+    try {
+      const nextProjects = await listProjects();
+      setProjects(nextProjects);
+      const fallbackId = nextSelectedId ?? (selectedProjectId === "" ? undefined : selectedProjectId);
+      if (fallbackId) {
+        const project = await getProject(fallbackId);
+        setActiveProject(project);
+        setSelectedProjectId(project.id);
+      } else if (nextProjects.length > 0) {
+        setSelectedProjectId(nextProjects[0].id);
+        const project = await getProject(nextProjects[0].id);
+        setActiveProject(project);
+      }
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Unable to load projects.");
+    }
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (!apiEnabled) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const user = await getCurrentUser();
+        setCurrentUser(user);
+        if (user) {
+          await refreshProjects();
+        }
+      } catch (error) {
+        setAuthError(error instanceof Error ? error.message : "Unable to restore session.");
+      }
+    })();
+  }, [apiEnabled, refreshProjects]);
 
   async function handleGenerate() {
     setIsLoading(true);
-    const next = await createArchitecture(prompt);
-    setOutput(next);
+    setProjectError(null);
+
+    try {
+      const next = await createAndSaveArchitecture(prompt, selectedProjectId === "" ? undefined : selectedProjectId);
+      setOutput(next);
+      setRecommendationKey("recommendation1");
+      setShowComparison(false);
+      setProjectStatus(selectedProjectId === "" ? "Generated in preview mode." : "Architecture generated and saved to the selected project.");
+
+      if (selectedProjectId !== "" && apiEnabled) {
+        const project = await getProject(selectedProjectId);
+        setActiveProject(project);
+        setProjects((current) =>
+          current.map((item) =>
+            item.id === project.id
+              ? {
+                  ...item,
+                  requestCount: project.requestCount,
+                  latestRequestAt: project.latestRequestAt
+                }
+              : item
+          )
+        );
+      }
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Generation failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleCreateProject() {
+    if (!currentUser) {
+      setProjectError("Please sign in before creating a project.");
+      return;
+    }
+
+    if (!projectName.trim()) {
+      setProjectError("Project name is required.");
+      return;
+    }
+
+    setProjectError(null);
+    setProjectStatus("Creating project...");
+
+    try {
+      const project = await createProject(projectName.trim(), projectDescription.trim() || undefined);
+      setProjectName("");
+      setProjectDescription("");
+      setProjectStatus(`Project "${project.name}" created.`);
+      await refreshProjects(project.id);
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Unable to create project.");
+      setProjectStatus(null);
+    }
+  }
+
+  async function handleSelectProject(projectId: number) {
+    setSelectedProjectId(projectId);
+    setProjectError(null);
+
+    try {
+      const project = await getProject(projectId);
+      setActiveProject(project);
+      setProjectStatus(`Loaded history for "${project.name}".`);
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Unable to load project.");
+    }
+  }
+
+  function loadHistoryRun(project: ProjectDetail, runId: number) {
+    const match = project.history.find((item) => item.id === runId);
+    if (!match) {
+      return;
+    }
+    setPrompt(match.prompt);
+    setOutput(match.output);
     setRecommendationKey("recommendation1");
     setShowComparison(false);
-    setIsLoading(false);
+    setProjectStatus(`Loaded saved run from ${new Date(match.createdAt).toLocaleString()}.`);
+  }
+
+  async function handleAuthSubmit() {
+    if (!authEmail.trim() || !authPassword.trim()) {
+      setAuthError("Email and password are required.");
+      return;
+    }
+
+    setAuthError(null);
+    setAuthStatus(authMode === "login" ? "Signing in..." : "Creating account...");
+
+    try {
+      const user = authMode === "login" ? await login(authEmail.trim(), authPassword) : await register(authEmail.trim(), authPassword);
+      setCurrentUser(user);
+      setAuthPassword("");
+      setAuthStatus(authMode === "login" ? `Signed in as ${user.email}.` : `Account created for ${user.email}.`);
+      await refreshProjects();
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Authentication failed.");
+      setAuthStatus(null);
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await logout();
+      setCurrentUser(null);
+      setProjects([]);
+      setSelectedProjectId("");
+      setActiveProject(null);
+      setAuthStatus("Signed out.");
+      setProjectStatus(null);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Unable to sign out.");
+    }
+  }
+
+  async function handleExportDiagram() {
+    if (!diagramRef.current) {
+      return;
+    }
+
+    try {
+      const dataUrl = await toPng(diagramRef.current, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: "#f8fafc"
+      });
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = "architecture-diagram.png";
+      link.click();
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "Unable to export diagram.");
+    }
   }
 
   return (
@@ -200,8 +523,8 @@ export function ArchitectureCopilot() {
                     services: activeProfile.services,
                     costEstimate: {
                       ...output.costEstimate,
-                      monthlyUsd: activeProfile.totalMonthlyUsd,
-                      items: activeCostItems
+                      monthlyUsd: adjustedMonthlyTotal,
+                      items: adjustedCostItems
                     }
                   })
                 )
@@ -222,15 +545,95 @@ export function ArchitectureCopilot() {
         <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
           <Card className={shellCardClassName}>
             <CardHeader>
-              <CardTitle>Architecture Request</CardTitle>
-              <CardDescription>Describe compliance, traffic, data sensitivity, integrations, and availability goals.</CardDescription>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle>Architecture Request</CardTitle>
+                  <CardDescription>Describe compliance, traffic, data sensitivity, integrations, and availability goals.</CardDescription>
+                </div>
+                {currentUser ? (
+                  <div className="rounded-md border border-slate-200/80 bg-slate-50/80 px-3 py-2 text-right">
+                    <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                      <UserRound className="h-4 w-4" />
+                      <span>{currentUser.email}</span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              {apiEnabled ? (
+                <div className="grid gap-3 rounded-lg border border-slate-200/80 bg-slate-50/80 p-3">
+                  {!currentUser ? (
+                    <>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Input placeholder="Email" type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
+                        <Input placeholder="Password" type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} />
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button type="button" variant="outline" onClick={() => setAuthMode((mode) => (mode === "login" ? "register" : "login"))}>
+                          {authMode === "login" ? "Need an account?" : "Have an account?"}
+                        </Button>
+                        <Button type="button" onClick={handleAuthSubmit}>
+                          <LogIn className="h-4 w-4" />
+                          {authMode === "login" ? "Sign In" : "Create Account"}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">Sign in to save architectures, organize projects, and revisit history.</p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Active project</p>
+                          <Button type="button" variant="ghost" size="sm" onClick={handleLogout}>
+                            <LogOut className="h-4 w-4" />
+                            Logout
+                          </Button>
+                        </div>
+                        <select value={selectedProjectId} onChange={(event) => void handleSelectProject(Number(event.target.value))} className={selectClassName}>
+                          {projects.length === 0 ? <option value="">No projects yet</option> : null}
+                          {projects.map((project) => (
+                            <option key={project.id} value={project.id}>
+                              {project.name}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground">
+                          {selectedProjectId === ""
+                            ? "Create a project to start saving generations."
+                            : "New generations will be attached to the selected project."}
+                        </p>
+                      </div>
+                      <div className="grid gap-2">
+                        <Input placeholder="Project name" value={projectName} onChange={(event) => setProjectName(event.target.value)} />
+                        <Textarea
+                          value={projectDescription}
+                          onChange={(event) => setProjectDescription(event.target.value)}
+                          placeholder="Short description"
+                          className="min-h-20 resize-none border-slate-200/80 bg-white/80"
+                        />
+                        <Button type="button" variant="outline" onClick={handleCreateProject}>
+                          <FolderKanban className="h-4 w-4" />
+                          Create Project
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                  {authStatus ? <p className="text-sm text-slate-600">{authStatus}</p> : null}
+                  {authError ? <p className="text-sm text-red-600">{authError}</p> : null}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-slate-200/80 bg-slate-50/80 p-3 text-sm text-slate-600">
+                  Project history is available when `NEXT_PUBLIC_API_URL` points to the FastAPI backend. You can still generate locally in preview mode.
+                </div>
+              )}
               <Textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} className="min-h-44 resize-none border-slate-200/80 bg-white/75" />
               <Button onClick={handleGenerate} className="w-full" disabled={isLoading || prompt.trim().length < 12}>
                 {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                 Generate Architecture
               </Button>
+              {projectStatus ? <p className="text-sm text-slate-600">{projectStatus}</p> : null}
+              {projectError ? <p className="text-sm text-red-600">{projectError}</p> : null}
             </CardContent>
           </Card>
 
@@ -253,6 +656,41 @@ export function ArchitectureCopilot() {
                   <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{sample.prompt}</p>
                 </button>
               ))}
+            </CardContent>
+          </Card>
+
+          <Card className={shellCardClassName}>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <History className="h-4 w-4" />
+                Project History
+              </CardTitle>
+              <CardDescription>Re-open saved prompts and architecture outputs from the selected project.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {!apiEnabled ? (
+                <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3 text-sm text-slate-600">History appears here when the API-backed project flow is enabled.</div>
+              ) : !currentUser ? (
+                <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3 text-sm text-slate-600">Sign in to unlock per-user project history.</div>
+              ) : activeProject && activeProject.history.length > 0 ? (
+                activeProject.history.slice(0, 6).map((item) => (
+                  <button
+                    key={item.id}
+                    className="w-full rounded-md border border-slate-200/80 bg-white/75 p-3 text-left transition hover:border-primary hover:bg-primary/5"
+                    onClick={() => loadHistoryRun(activeProject, item.id)}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-slate-900">{new Date(item.createdAt).toLocaleString()}</span>
+                      <Badge variant="outline">Run {item.id}</Badge>
+                    </div>
+                    <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{item.prompt}</p>
+                  </button>
+                ))
+              ) : (
+                <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3 text-sm text-slate-600">
+                  {selectedProjectId === "" ? "Choose or create a project to build history." : "No saved runs yet for this project."}
+                </div>
+              )}
             </CardContent>
           </Card>
         </aside>
@@ -286,7 +724,7 @@ export function ArchitectureCopilot() {
           <div className="grid gap-3 md:grid-cols-4">
             <Stat label="Recommended services" value={String(activeProfile.services.length)} icon={Layers3} />
             <Stat label="High-risk findings" value={String(criticalCount)} icon={AlertTriangle} />
-            <Stat label="Monthly estimate" value={`$${activeProfile.totalMonthlyUsd.toLocaleString()}`} icon={WalletCards} />
+            <Stat label="Monthly estimate" value={`$${adjustedMonthlyTotal.toLocaleString()}`} icon={WalletCards} />
             <Stat label="IaC templates" value="Bicep + Terraform" icon={Braces} />
           </div>
 
@@ -349,10 +787,19 @@ export function ArchitectureCopilot() {
                 </div>
                 <div className={mutedPanelClassName + " px-4 py-3"}>
                   <p className="text-xs uppercase tracking-wide text-slate-500">{activeProfile.label}</p>
-                  <p className="mt-1 text-xl font-semibold text-slate-900">${activeProfile.totalMonthlyUsd.toLocaleString()}/mo</p>
+                  <p className="mt-1 text-xl font-semibold text-slate-900">${adjustedMonthlyTotal.toLocaleString()}/mo</p>
+                  <p className="mt-1 text-xs text-slate-500">Baseline ${baselineMonthlyTotal.toLocaleString()}/mo</p>
                 </div>
               </div>
               <div className="grid gap-3 md:grid-cols-3">
+                <div className={mutedPanelClassName + " p-4"}>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Generation mode</p>
+                  <div className="mt-2 flex items-center gap-2 text-sm text-slate-800">
+                    {output.generationSource === "ai" ? <Sparkles className="h-4 w-4 text-primary" /> : <CloudCog className="h-4 w-4 text-primary" />}
+                    <span>{output.generationSource === "ai" ? "AI-enhanced" : "Deterministic preview"}</span>
+                  </div>
+                  {output.generationNotes?.[0] ? <p className="mt-2 text-sm leading-6 text-slate-700">{output.generationNotes[0]}</p> : null}
+                </div>
                 <div className={mutedPanelClassName + " p-4"}>
                   <p className="text-xs uppercase tracking-wide text-slate-500">First data flow step</p>
                   <p className="mt-2 text-sm leading-6 text-slate-800">{output.dataFlow[0]}</p>
@@ -361,10 +808,10 @@ export function ArchitectureCopilot() {
                   <p className="text-xs uppercase tracking-wide text-slate-500">Primary risk</p>
                   <p className="mt-2 text-sm leading-6 text-slate-800">{output.risks[0]}</p>
                 </div>
-                <div className={mutedPanelClassName + " p-4"}>
-                  <p className="text-xs uppercase tracking-wide text-slate-500">First recommendation</p>
-                  <p className="mt-2 text-sm leading-6 text-slate-800">{output.recommendations[0]}</p>
-                </div>
+              </div>
+              <div className={mutedPanelClassName + " p-4"}>
+                <p className="text-xs uppercase tracking-wide text-slate-500">First recommendation</p>
+                <p className="mt-2 text-sm leading-6 text-slate-800">{output.recommendations[0]}</p>
               </div>
             </CardHeader>
           </Card>
@@ -383,15 +830,29 @@ export function ArchitectureCopilot() {
             <TabsContent value="diagram">
               <Card className={shellCardClassName}>
                 <CardHeader>
-                  <CardTitle>Generated Azure Diagram</CardTitle>
-                  <CardDescription>Client-side React Flow view generated from the structured architecture output.</CardDescription>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <CardTitle>Generated Azure Diagram</CardTitle>
+                      <CardDescription>Client-side React Flow view generated from the structured architecture output.</CardDescription>
+                    </div>
+                    <Button variant="outline" onClick={handleExportDiagram}>
+                      <Download className="h-4 w-4" />
+                      PNG
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="h-[520px] overflow-hidden rounded-lg border border-slate-200/80 bg-white/80">
-                    <ReactFlow nodes={output.diagram.nodes} edges={output.diagram.edges} fitView>
-                      <MiniMap pannable zoomable />
+                  <div ref={diagramRef} className="h-[520px] overflow-hidden rounded-lg border border-slate-200/80 bg-white/80">
+                    <ReactFlow nodes={diagramNodes} edges={diagramEdges} nodeTypes={memoizedNodeTypes} fitView fitViewOptions={{ padding: 0.18 }}>
+                      <MiniMap
+                        pannable
+                        zoomable
+                        nodeStrokeColor="#cbd5e1"
+                        nodeColor="#f8fafc"
+                        maskColor="rgba(241,245,249,0.72)"
+                      />
                       <Controls />
-                      <Background />
+                      <Background color="#e2e8f0" gap={20} />
                     </ReactFlow>
                   </div>
                 </CardContent>
@@ -490,7 +951,37 @@ export function ArchitectureCopilot() {
                   </CardTitle>
                   <CardDescription>Findings map to private access, RBAC, monitoring, encryption, backup, gateway, and Key Vault controls.</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-3">
+                <CardContent className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className={mutedPanelClassName + " p-4"}>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Compliance packs</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {output.securityProfile.compliancePacks.map((pack) => (
+                          <Badge key={pack} variant="secondary">
+                            {pack}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <div className={mutedPanelClassName + " p-4"}>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Identity strategy</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-800">{output.securityProfile.identityStrategy}</p>
+                    </div>
+                    <div className={mutedPanelClassName + " p-4"}>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Network boundary</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-800">{output.securityProfile.networkBoundary}</p>
+                    </div>
+                  </div>
+                  <div className={mutedPanelClassName + " p-4"}>
+                    <p className="text-xs uppercase tracking-wide text-slate-500">Azure Policy posture</p>
+                    <div className="mt-2 grid gap-2">
+                      {output.securityProfile.policyRecommendations.map((item) => (
+                        <p key={item} className="text-sm leading-6 text-slate-800">
+                          {item}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
                   {output.securityFindings.map((finding) => (
                     <div key={finding.title} className="rounded-lg border border-slate-200/80 bg-white/75 p-4">
                       <div className="flex flex-wrap items-center gap-2">
@@ -511,7 +1002,57 @@ export function ArchitectureCopilot() {
                   <CardTitle>Monthly Cost Estimate</CardTitle>
                   <CardDescription>{output.costEstimate.disclaimer}</CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 rounded-lg border border-slate-200/80 bg-slate-50/80 p-4 lg:grid-cols-[1fr_1fr_1fr_auto]">
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Traffic profile</p>
+                      <select value={trafficProfile} onChange={(event) => setTrafficProfile(event.target.value as TrafficProfile)} className={selectClassName}>
+                        <option value="steady">Steady</option>
+                        <option value="growth">Growth</option>
+                        <option value="burst">Burst / Peak</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Regions</p>
+                      <Input type="number" min={1} max={6} value={regionCount} onChange={(event) => setRegionCount(Math.min(6, Math.max(1, Number(event.target.value) || 1)))} />
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Observability</p>
+                      <select value={observabilityDepth} onChange={(event) => setObservabilityDepth(event.target.value as ObservabilityDepth)} className={selectClassName}>
+                        <option value="lean">Lean</option>
+                        <option value="standard">Standard</option>
+                        <option value="deep">Deep retention</option>
+                      </select>
+                    </div>
+                    <div className="flex items-end">
+                      <a
+                        href="https://azure.microsoft.com/pricing/calculator/"
+                        target="_blank"
+                        rel="noreferrer"
+                        className={ghostLinkClassName + " w-full"}
+                      >
+                        Pricing Calculator
+                      </a>
+                    </div>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className={mutedPanelClassName + " p-4"}>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Adjusted monthly total</p>
+                      <p className="mt-2 text-xl font-semibold text-slate-900">${adjustedMonthlyTotal.toLocaleString()}</p>
+                    </div>
+                    <div className={mutedPanelClassName + " p-4"}>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Baseline recommendation</p>
+                      <p className="mt-2 text-xl font-semibold text-slate-900">${baselineMonthlyTotal.toLocaleString()}</p>
+                    </div>
+                    <div className={mutedPanelClassName + " p-4"}>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Delta</p>
+                      <p className="mt-2 text-xl font-semibold text-slate-900">
+                        {adjustedMonthlyTotal === baselineMonthlyTotal
+                          ? "$0"
+                          : `${adjustedMonthlyTotal > baselineMonthlyTotal ? "+" : "-"}$${Math.abs(adjustedMonthlyTotal - baselineMonthlyTotal).toLocaleString()}`}
+                      </p>
+                    </div>
+                  </div>
                   <div className="overflow-hidden rounded-lg border border-slate-200/80 bg-white/75">
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50 text-left">
@@ -522,13 +1063,20 @@ export function ArchitectureCopilot() {
                         </tr>
                       </thead>
                       <tbody>
-                        {activeCostItems.map((item) => (
+                        {adjustedCostItems.map((item) => (
                           <tr key={item.service} className="border-t">
                             <td className="px-3 py-2 font-medium">{item.service}</td>
                             <td className="px-3 py-2 text-muted-foreground">{item.assumption}</td>
                             <td className="px-3 py-2 text-right font-mono">${item.monthlyUsd.toLocaleString()}</td>
                           </tr>
                         ))}
+                        <tr className="border-t bg-slate-50">
+                          <td className="px-3 py-2 font-semibold">Total</td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {trafficProfile === "steady" ? "Base traffic posture" : trafficProfile === "growth" ? "Growth allowance applied" : "Peak traffic allowance applied"}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-semibold">${adjustedMonthlyTotal.toLocaleString()}</td>
+                        </tr>
                       </tbody>
                     </table>
                   </div>
@@ -554,7 +1102,43 @@ export function ArchitectureCopilot() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {output.iacStructure.modules.map((module) => (
+                      <div key={module.name} className="rounded-lg border border-slate-200/80 bg-white/75 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">{module.name}</p>
+                            <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">{module.scope}</p>
+                          </div>
+                          <Badge variant="outline">{module.resources.length} resources</Badge>
+                        </div>
+                        <p className="mt-3 text-sm leading-6 text-slate-700">{module.purpose}</p>
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {module.resources.map((resource) => (
+                            <Badge key={resource} variant="secondary">
+                              {resource}
+                            </Badge>
+                          ))}
+                        </div>
+                        {module.dependsOn.length > 0 ? (
+                          <p className="mt-3 text-xs text-slate-500">Depends on: {module.dependsOn.join(", ")}</p>
+                        ) : (
+                          <p className="mt-3 text-xs text-slate-500">Deploy first in the stack order.</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className={mutedPanelClassName + " p-4"}>
+                    <p className="text-xs uppercase tracking-wide text-slate-500">Deployment order</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {output.iacStructure.deploymentOrder.map((moduleName, index) => (
+                        <Badge key={moduleName} variant="outline">
+                          {index + 1}. {moduleName}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
                   <div className="overflow-hidden rounded-lg border border-slate-200/80 bg-white/75">
                     <MonacoEditor height="460px" language={codeKind === "bicep" ? "bicep" : "hcl"} theme="vs-light" value={code} options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13 }} />
                   </div>

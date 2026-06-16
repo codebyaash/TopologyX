@@ -1,8 +1,10 @@
 from app.schemas.architecture import ArchitectureOutput, Diagram, DiagramEdge, DiagramNode, DiagramNodeData, DiagramPosition, IacTemplates
+from app.services.ai.client import AIConfigurationError, AIRequestError, complete_json, is_ai_configured
+from app.services.ai.prompts import SYSTEM_PROMPT, build_architecture_prompt
 from app.services.architecture.catalog import deployment_components, infer_workload, recommended_services
 from app.services.cost.estimator import estimate_cost
-from app.services.iac.generator import generate_bicep, generate_terraform
-from app.services.security.reviewer import review_security
+from app.services.iac.generator import build_iac_structure, generate_bicep, generate_terraform
+from app.services.security.reviewer import build_security_profile, review_security
 
 
 def build_diagram() -> Diagram:
@@ -48,7 +50,7 @@ def build_data_flow(prompt: str) -> list[str]:
     ]
 
 
-def generate_architecture(prompt: str) -> ArchitectureOutput:
+def build_deterministic_architecture(prompt: str) -> ArchitectureOutput:
     workload = infer_workload(prompt)
     services = recommended_services(prompt)
     cost_estimate = estimate_cost(prompt, services)
@@ -65,6 +67,8 @@ def generate_architecture(prompt: str) -> ArchitectureOutput:
     )
 
     return ArchitectureOutput(
+        generationSource="deterministic",
+        generationNotes=["Generated with the built-in deterministic architecture engine."],
         summary=f"Recommended Azure architecture for {summary_target} with private data paths, asynchronous processing, observability, and IaC-ready foundations. Estimated baseline cost: ${cost_estimate.monthlyUsd:,}/month.",
         services=services,
         deployment=deployment_components(prompt),
@@ -88,7 +92,32 @@ def generate_architecture(prompt: str) -> ArchitectureOutput:
             "Add SQL read replicas or CQRS projections for reporting-heavy workloads.",
         ],
         diagram=build_diagram(),
+        securityProfile=build_security_profile(prompt, services),
         securityFindings=review_security(prompt, services),
         costEstimate=cost_estimate,
         iac=IacTemplates(bicep=generate_bicep(prompt), terraform=generate_terraform(prompt)),
+        iacStructure=build_iac_structure(prompt),
     )
+
+
+def generate_architecture(prompt: str) -> ArchitectureOutput:
+    baseline = build_deterministic_architecture(prompt)
+
+    if not is_ai_configured():
+        return baseline
+
+    try:
+        candidate = complete_json(
+            SYSTEM_PROMPT,
+            build_architecture_prompt(prompt, baseline.model_dump_json(indent=2)),
+        )
+        output = ArchitectureOutput.model_validate(candidate)
+        if not output.generationNotes:
+            output.generationNotes = ["Generated through the configured AI provider and validated against the architecture schema."]
+        return output
+    except (AIConfigurationError, AIRequestError, ValueError):
+        baseline.generationNotes = [
+            "AI generation was configured but unavailable or invalid for this request.",
+            "Returned to the deterministic architecture engine for a stable result.",
+        ]
+        return baseline

@@ -3,16 +3,18 @@
 ## Phase 1 - Foundation
 
 - Landing/app shell
-- Login/register placeholder
-- Project dashboard model
+- Login/register
+- Project persistence model
 - Create architecture request
 - Save generated architecture
+- Project history retrieval
 
 ## Phase 2 - AI Architect Chat
 
 - Prompt orchestration
 - OpenAI or Azure OpenAI adapter
 - Structured JSON response validation
+- Deterministic fallback path
 - Request history
 
 ## Phase 3 - Diagram Generator
@@ -45,3 +47,9 @@
 - Download IaC
 - README-style architecture document
 
+## Next Active Work
+
+- AI fallback and generator contract tests
+- richer cost estimation controls
+- deeper security/compliance packs
+- more modular IaC packaging

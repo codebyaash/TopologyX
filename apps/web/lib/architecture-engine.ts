@@ -1,4 +1,4 @@
-import type { ArchitectureOutput, CostLineItem, DeploymentComponent, SecurityFinding, ServiceAlternative, ServiceRecommendation } from "@/lib/types";
+import type { ArchitectureOutput, CostLineItem, DeploymentComponent, IacModule, SecurityFinding, SecurityProfile, ServiceAlternative, ServiceRecommendation } from "@/lib/types";
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
@@ -357,6 +357,62 @@ function generateSecurityFindings(prompt: string, services: ServiceRecommendatio
   return findings;
 }
 
+function buildSecurityProfile(prompt: string, services: ServiceRecommendation[]): SecurityProfile {
+  const workload = inferWorkload(prompt);
+  const text = prompt.toLowerCase();
+  const compliancePacks: string[] = [];
+  const policyRecommendations = [
+    "Enforce private endpoints, approved regions, and diagnostic settings with Azure Policy initiatives.",
+    "Require managed identities over shared secrets for service-to-service access.",
+    "Deny public network access on data services unless a documented exception exists."
+  ];
+
+  if (workload.healthcare) {
+    compliancePacks.push("HIPAA", "PHI Handling");
+    policyRecommendations.push(
+      "Apply policies for audit log retention, customer-managed key review, and backup evidence collection.",
+      "Require restore-drill evidence and access review on patient-data paths."
+    );
+  }
+
+  if (workload.finance) {
+    compliancePacks.push("PCI-minded Controls", "Financial Audit");
+    policyRecommendations.push(
+      "Require stronger API policy enforcement, WAF logging, and privileged access review for payment paths.",
+      "Audit database and message-path encryption ownership decisions before production rollout."
+    );
+  }
+
+  if (!compliancePacks.length && (text.includes("insurance") || text.includes("claims") || text.includes("customer"))) {
+    compliancePacks.push("PII Handling", "Operational Audit");
+    policyRecommendations.push(
+      "Apply retention, masking, and secure document-handling controls for claim and customer evidence.",
+      "Enforce secure communication workflows and approval-bound payout actions with audit traces."
+    );
+  }
+
+  if (workload.ai) {
+    compliancePacks.push("PII Review for AI Pipelines");
+    policyRecommendations.push("Require private AI endpoints, content traceability, and document access boundaries for AI ingestion stages.");
+  }
+
+  if (workload.iot) {
+    compliancePacks.push("Device Identity");
+    policyRecommendations.push("Require per-device identity controls, rotation policy, and telemetry ingress monitoring.");
+  }
+
+  const defenderPresent = services.some((service) => service.name.toLowerCase().includes("defender"));
+
+  return {
+    compliancePacks: compliancePacks.length > 0 ? compliancePacks : ["Azure Baseline Security"],
+    identityStrategy: defenderPresent
+      ? "Managed identities with RBAC, privileged access review, and centralized posture management."
+      : "Managed identities with RBAC and explicit least-privilege boundaries across compute, data, and messaging.",
+    networkBoundary: "Private ingress-to-data paths with segmented subnets, private endpoints, and policy-enforced public access exceptions only.",
+    policyRecommendations
+  };
+}
+
 function estimateCost(prompt: string, services: ServiceRecommendation[]) {
   const workload = inferWorkload(prompt);
   const multiplier = workload.highScale ? 1.7 : workload.multiRegion ? 2.1 : 1;
@@ -376,6 +432,86 @@ function iacHeader(components: DeploymentComponent[]) {
   return components
     .map((item) => `// - ${item.name}: ${item.iacResources.join(", ")}`)
     .join("\n");
+}
+
+function buildIacStructure(prompt: string) {
+  const workload = inferWorkload(prompt);
+  const modules: IacModule[] = [
+    {
+      name: "foundation",
+      scope: "Foundation",
+      purpose: "Creates the resource group, shared tags, naming suffix, and shared deployment variables.",
+      resources: ["resourceGroup", "tags", "naming suffix", "shared locals/vars"],
+      dependsOn: []
+    },
+    {
+      name: "network",
+      scope: "Network",
+      purpose: "Defines virtual network boundaries, private DNS resolution, and private access paths across data services.",
+      resources: ["virtualNetwork", "subnets", "private DNS zones", "private endpoints"],
+      dependsOn: ["foundation"]
+    },
+    {
+      name: "identity",
+      scope: "Identity",
+      purpose: "Assigns managed identities and least-privilege access boundaries for runtime resources.",
+      resources: ["userAssignedIdentity", "RBAC assignments", "Key Vault access model"],
+      dependsOn: ["foundation"]
+    },
+    {
+      name: "data",
+      scope: "Data",
+      purpose: "Deploys transactional, object, and messaging stores with encryption, retention, and private access defaults.",
+      resources: ["Azure SQL", "Storage Account", "Service Bus"],
+      dependsOn: ["foundation", "network", "identity"]
+    },
+    {
+      name: "application",
+      scope: "Application",
+      purpose: "Deploys ingress, API gateway, and compute runtime services for synchronous and asynchronous workload handling.",
+      resources: ["Front Door", "API Management", "Function App", "Service Plan"],
+      dependsOn: ["foundation", "network", "identity", "data"]
+    },
+    {
+      name: "observability",
+      scope: "Observability",
+      purpose: "Captures traces, metrics, logs, alerts, and diagnostic settings across platform and workload services.",
+      resources: ["Log Analytics", "Application Insights", "diagnostic settings", "metric alerts"],
+      dependsOn: ["foundation", "application", "data"]
+    },
+    {
+      name: "policy",
+      scope: "Policy",
+      purpose: "Applies baseline guardrails for defender pricing, private access posture, diagnostics, and approved deployment patterns.",
+      resources: ["Defender pricing", "Azure Policy assignments", "security defaults"],
+      dependsOn: ["foundation", "network", "identity"]
+    }
+  ];
+
+  if (workload.ai) {
+    modules.push({
+      name: "ai-extension",
+      scope: "AI",
+      purpose: "Adds document extraction and search services with private access controls and workload-specific security defaults.",
+      resources: ["Azure AI Document Intelligence", "Azure AI Search"],
+      dependsOn: ["foundation", "network", "identity", "application", "data"]
+    });
+  }
+
+  if (workload.iot) {
+    modules.push({
+      name: "iot-extension",
+      scope: "IoT",
+      purpose: "Adds device ingestion and stream-processing components for telemetry-heavy workloads.",
+      resources: ["IoT Hub", "Stream Analytics"],
+      dependsOn: ["foundation", "network", "application", "data", "observability"]
+    });
+  }
+
+  return {
+    modules,
+    deploymentOrder: modules.map((module) => module.name)
+  };
 }
 
 function generateBicep(prompt: string) {
@@ -1175,6 +1311,8 @@ export function generateArchitecture(prompt: string): ArchitectureOutput {
   const workload = inferWorkload(prompt);
 
   return {
+    generationSource: "deterministic",
+    generationNotes: ["Generated with the built-in deterministic architecture engine."],
     summary: `Recommended Azure architecture for ${workload.healthcare ? "a regulated healthcare platform" : workload.finance ? "a financial services platform" : workload.iot ? "an IoT ingestion platform" : workload.ai ? "an AI document workflow" : "a production SaaS workload"} with private data paths, asynchronous processing, observability, and IaC-ready foundations. Estimated baseline cost: ${currency.format(costEstimate.monthlyUsd)}/month.`,
     services,
     deployment: generateDeploymentComponents(prompt),
@@ -1198,11 +1336,13 @@ export function generateArchitecture(prompt: string): ArchitectureOutput {
       "Add SQL read replicas or CQRS projections for reporting-heavy workloads."
     ],
     diagram: generateDiagram(),
+    securityProfile: buildSecurityProfile(prompt, services),
     securityFindings,
     costEstimate,
     iac: {
       bicep: generateBicep(prompt),
       terraform: generateTerraform(prompt)
-    }
+    },
+    iacStructure: buildIacStructure(prompt)
   };
 }

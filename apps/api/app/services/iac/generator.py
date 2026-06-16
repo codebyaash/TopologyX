@@ -1,3 +1,4 @@
+from app.schemas.architecture import IacModule, IacStructure
 from app.services.architecture.catalog import deployment_components, infer_workload
 
 
@@ -5,6 +6,88 @@ def _iac_header(prompt: str, comment_prefix: str) -> str:
     return "\n".join(
         f"{comment_prefix} - {item['name']}: {', '.join(item['iacResources'])}"
         for item in deployment_components(prompt)
+    )
+
+
+def build_iac_structure(prompt: str) -> IacStructure:
+    workload = infer_workload(prompt)
+    modules = [
+        IacModule(
+            name="foundation",
+            scope="Foundation",
+            purpose="Creates the resource group, shared tags, naming suffix, and shared deployment variables.",
+            resources=["resourceGroup", "tags", "naming suffix", "shared locals/vars"],
+            dependsOn=[],
+        ),
+        IacModule(
+            name="network",
+            scope="Network",
+            purpose="Defines virtual network boundaries, private DNS resolution, and private access paths across data services.",
+            resources=["virtualNetwork", "subnets", "private DNS zones", "private endpoints"],
+            dependsOn=["foundation"],
+        ),
+        IacModule(
+            name="identity",
+            scope="Identity",
+            purpose="Assigns managed identities and least-privilege access boundaries for runtime resources.",
+            resources=["userAssignedIdentity", "RBAC assignments", "Key Vault access model"],
+            dependsOn=["foundation"],
+        ),
+        IacModule(
+            name="data",
+            scope="Data",
+            purpose="Deploys transactional, object, and messaging stores with encryption, retention, and private access defaults.",
+            resources=["Azure SQL", "Storage Account", "Service Bus"],
+            dependsOn=["foundation", "network", "identity"],
+        ),
+        IacModule(
+            name="application",
+            scope="Application",
+            purpose="Deploys ingress, API gateway, and compute runtime services for synchronous and asynchronous workload handling.",
+            resources=["Front Door", "API Management", "Function App", "Service Plan"],
+            dependsOn=["foundation", "network", "identity", "data"],
+        ),
+        IacModule(
+            name="observability",
+            scope="Observability",
+            purpose="Captures traces, metrics, logs, alerts, and diagnostic settings across platform and workload services.",
+            resources=["Log Analytics", "Application Insights", "diagnostic settings", "metric alerts"],
+            dependsOn=["foundation", "application", "data"],
+        ),
+        IacModule(
+            name="policy",
+            scope="Policy",
+            purpose="Applies baseline guardrails for defender pricing, private access posture, diagnostics, and approved deployment patterns.",
+            resources=["Defender pricing", "Azure Policy assignments", "security defaults"],
+            dependsOn=["foundation", "network", "identity"],
+        ),
+    ]
+
+    if workload.ai:
+        modules.append(
+            IacModule(
+                name="ai-extension",
+                scope="AI",
+                purpose="Adds document extraction and search services with private access controls and workload-specific security defaults.",
+                resources=["Azure AI Document Intelligence", "Azure AI Search"],
+                dependsOn=["foundation", "network", "identity", "application", "data"],
+            )
+        )
+
+    if workload.iot:
+        modules.append(
+            IacModule(
+                name="iot-extension",
+                scope="IoT",
+                purpose="Adds device ingestion and stream-processing components for telemetry-heavy workloads.",
+                resources=["IoT Hub", "Stream Analytics"],
+                dependsOn=["foundation", "network", "application", "data", "observability"],
+            )
+        )
+
+    return IacStructure(
+        modules=modules,
+        deploymentOrder=[module.name for module in modules],
     )
 
 

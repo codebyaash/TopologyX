@@ -1,7 +1,12 @@
+from __future__ import annotations
+
+from typing import Optional
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.auth import get_current_user, get_current_user_optional
 from app.db.session import get_db
 from app.models.project import ArchitectureOutput as ArchitectureOutputModel
 from app.models.project import ArchitectureRequest as ArchitectureRequestModel
@@ -21,16 +26,6 @@ from app.schemas.architecture import (
 from app.services.architecture.generator import generate_architecture
 
 router = APIRouter()
-
-
-def _get_or_create_demo_user(db: Session) -> User:
-    demo_user = db.query(User).filter(User.email == "demo@architecture.local").first()
-    if demo_user is None:
-        demo_user = User(email="demo@architecture.local", password_hash="demo-user-placeholder")
-        db.add(demo_user)
-        db.commit()
-        db.refresh(demo_user)
-    return demo_user
 
 
 def _serialize_run(request_row: ArchitectureRequestModel, output_row: ArchitectureOutputModel) -> SavedArchitectureRun:
@@ -99,9 +94,8 @@ def _persist_generation(db: Session, project_id: int, prompt: str, output: Archi
 
 
 @router.post("/projects", response_model=ProjectSummary)
-def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> ProjectSummary:
-    user_id = payload.userId or _get_or_create_demo_user(db).id
-    project = Project(user_id=user_id, name=payload.name, description=payload.description)
+def create_project(payload: ProjectCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ProjectSummary:
+    project = Project(user_id=user.id, name=payload.name, description=payload.description)
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -117,7 +111,7 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Pro
 
 
 @router.get("/projects", response_model=list[ProjectSummary])
-def list_projects(db: Session = Depends(get_db)) -> list[ProjectSummary]:
+def list_projects(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[ProjectSummary]:
     rows = (
         db.query(
             Project.id,
@@ -129,6 +123,7 @@ def list_projects(db: Session = Depends(get_db)) -> list[ProjectSummary]:
             func.count(ArchitectureRequestModel.id).label("request_count"),
         )
         .outerjoin(ArchitectureRequestModel, ArchitectureRequestModel.project_id == Project.id)
+        .filter(Project.user_id == user.id)
         .group_by(Project.id)
         .order_by(func.max(ArchitectureRequestModel.created_at).desc(), Project.created_at.desc())
         .all()
@@ -148,8 +143,8 @@ def list_projects(db: Session = Depends(get_db)) -> list[ProjectSummary]:
 
 
 @router.get("/projects/{project_id}", response_model=ProjectDetail)
-def get_project(project_id: int, db: Session = Depends(get_db)) -> ProjectDetail:
-    project = db.query(Project).filter(Project.id == project_id).first()
+def get_project(project_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> ProjectDetail:
+    project = db.query(Project).filter(Project.id == project_id, Project.user_id == user.id).first()
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -175,10 +170,16 @@ def get_project(project_id: int, db: Session = Depends(get_db)) -> ProjectDetail
 
 
 @router.post("/generate", response_model=ArchitectureOutput)
-def generate(request: ArchitectureRequest, db: Session = Depends(get_db)) -> ArchitectureOutput:
+def generate(
+    request: ArchitectureRequest,
+    db: Session = Depends(get_db),
+    user: Optional[User] = Depends(get_current_user_optional),
+) -> ArchitectureOutput:
     output = generate_architecture(request.prompt)
     if request.projectId is not None:
-        project = db.query(Project).filter(Project.id == request.projectId).first()
+        if user is None:
+            raise HTTPException(status_code=401, detail="Login required to save a generated architecture")
+        project = db.query(Project).filter(Project.id == request.projectId, Project.user_id == user.id).first()
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
         _persist_generation(db, request.projectId, request.prompt, output)

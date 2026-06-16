@@ -1,15 +1,18 @@
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
 Severity = Literal["Critical", "High", "Medium", "Low"]
 Pillar = Literal["Reliability", "Security", "Cost optimization", "Operational excellence", "Performance efficiency"]
+GenerationSource = Literal["deterministic", "ai"]
 
 
 class ArchitectureRequest(BaseModel):
     prompt: str = Field(min_length=12)
-    projectId: int | None = None
+    projectId: Optional[int] = None
 
 
 class ServiceAlternative(BaseModel):
@@ -43,7 +46,7 @@ class DiagramNode(BaseModel):
     id: str
     position: DiagramPosition
     data: DiagramNodeData
-    type: str | None = None
+    type: Optional[str] = None
 
 
 class DiagramEdge(BaseModel):
@@ -63,6 +66,13 @@ class SecurityFinding(BaseModel):
     title: str
     detail: str
     remediation: str
+
+
+class SecurityProfile(BaseModel):
+    compliancePacks: list[str]
+    identityStrategy: str
+    networkBoundary: str
+    policyRecommendations: list[str]
 
 
 class CostLineItem(BaseModel):
@@ -91,7 +101,22 @@ class IacTemplates(BaseModel):
     terraform: str
 
 
+class IacModule(BaseModel):
+    name: str
+    scope: Literal["Foundation", "Network", "Identity", "Data", "Application", "Observability", "Policy", "AI", "IoT"]
+    purpose: str
+    resources: list[str]
+    dependsOn: list[str]
+
+
+class IacStructure(BaseModel):
+    modules: list[IacModule]
+    deploymentOrder: list[str]
+
+
 class ArchitectureOutput(BaseModel):
+    generationSource: GenerationSource = "deterministic"
+    generationNotes: list[str] = []
     summary: str
     services: list[ServiceRecommendation]
     deployment: list[DeploymentComponent]
@@ -100,24 +125,25 @@ class ArchitectureOutput(BaseModel):
     recommendations: list[str]
     scaling: list[str]
     diagram: Diagram
+    securityProfile: SecurityProfile
     securityFindings: list[SecurityFinding]
     costEstimate: CostEstimate
     iac: IacTemplates
+    iacStructure: IacStructure
 
 
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=3, max_length=160)
-    description: str | None = None
-    userId: int | None = None
+    description: Optional[str] = None
 
 
 class ProjectSummary(BaseModel):
     id: int
     name: str
-    description: str | None
+    description: Optional[str]
     userId: int
     createdAt: datetime
-    latestRequestAt: datetime | None = None
+    latestRequestAt: Optional[datetime] = None
     requestCount: int = 0
 
 
@@ -131,3 +157,14 @@ class SavedArchitectureRun(BaseModel):
 
 class ProjectDetail(ProjectSummary):
     history: list[SavedArchitectureRun]
+
+
+class AuthRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=255)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class AuthUser(BaseModel):
+    id: int
+    email: str
+    createdAt: datetime
