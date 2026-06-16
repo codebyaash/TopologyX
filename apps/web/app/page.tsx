@@ -53,6 +53,12 @@ export default function Home() {
                 Open Generator
                 <ArrowRight className="h-4 w-4" />
               </Link>
+              <Link
+                href="/projects"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-200/80 bg-white/75 px-4 text-sm font-medium text-slate-700 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Projects
+              </Link>
             </div>
           </div>
 

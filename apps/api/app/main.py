@@ -16,7 +16,8 @@ app = FastAPI(
 
 @app.on_event("startup")
 def startup() -> None:
-    Base.metadata.create_all(bind=engine)
+    if settings.auto_create_tables:
+        Base.metadata.create_all(bind=engine)
 
 app.add_middleware(
     CORSMiddleware,

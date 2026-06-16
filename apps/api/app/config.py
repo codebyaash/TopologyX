@@ -35,6 +35,7 @@ def _list_env(name: str, default: list[str]) -> list[str]:
 @dataclass(frozen=True)
 class Settings:
     database_url: str
+    auto_create_tables: bool
     cors_origins: list[str]
     session_secret: str
     session_cookie_name: str
@@ -46,6 +47,7 @@ class Settings:
 
 settings = Settings(
     database_url=os.getenv("DATABASE_URL", "sqlite:///./architecture_copilot.db"),
+    auto_create_tables=_bool_env("AUTO_CREATE_TABLES", True),
     cors_origins=_list_env("CORS_ORIGINS", ["http://localhost:3000", "http://127.0.0.1:3000"]),
     session_secret=os.getenv("SESSION_SECRET", "dev-session-secret"),
     session_cookie_name=os.getenv("SESSION_COOKIE_NAME", "architecture_session"),

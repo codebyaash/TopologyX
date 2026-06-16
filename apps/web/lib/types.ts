@@ -40,6 +40,19 @@ export type CostLineItem = {
   monthlyUsd: number;
 };
 
+export type RecommendationKey = "recommendation1" | "recommendation2" | "recommendation3";
+export type TrafficProfile = "steady" | "growth" | "burst";
+export type ObservabilityDepth = "lean" | "standard" | "deep";
+
+export type RunContext = {
+  recommendationKey: RecommendationKey;
+  recommendationLabel: string;
+  recommendationDescription: string;
+  trafficProfile: TrafficProfile;
+  regionCount: number;
+  observabilityDepth: ObservabilityDepth;
+};
+
 export type DeploymentComponent = {
   name: string;
   category: "Ingress" | "Network" | "Compute" | "Data" | "Messaging" | "Security" | "Observability" | "AI" | "IoT" | "Connector";
@@ -110,6 +123,7 @@ export type SavedArchitectureRun = {
   prompt: string;
   createdAt: string;
   output: ArchitectureOutput;
+  runContext?: RunContext | null;
 };
 
 export type ProjectDetail = ProjectSummary & {

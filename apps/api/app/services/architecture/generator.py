@@ -100,6 +100,27 @@ def build_deterministic_architecture(prompt: str) -> ArchitectureOutput:
     )
 
 
+def architecture_is_consistent(output: ArchitectureOutput) -> bool:
+    if not output.services or not output.deployment:
+        return False
+    if not output.securityProfile.compliancePacks or not output.securityProfile.policyRecommendations:
+        return False
+    if not output.iacStructure.modules or not output.iacStructure.deploymentOrder:
+        return False
+
+    module_names = [module.name for module in output.iacStructure.modules]
+    if output.iacStructure.deploymentOrder[0] != "foundation":
+        return False
+    if set(output.iacStructure.deploymentOrder) != set(module_names):
+        return False
+
+    line_item_total = sum(item.monthlyUsd for item in output.costEstimate.items)
+    if line_item_total != output.costEstimate.monthlyUsd:
+        return False
+
+    return True
+
+
 def generate_architecture(prompt: str) -> ArchitectureOutput:
     baseline = build_deterministic_architecture(prompt)
 
@@ -112,6 +133,8 @@ def generate_architecture(prompt: str) -> ArchitectureOutput:
             build_architecture_prompt(prompt, baseline.model_dump_json(indent=2)),
         )
         output = ArchitectureOutput.model_validate(candidate)
+        if not architecture_is_consistent(output):
+            raise ValueError("AI response passed schema validation but failed internal consistency checks.")
         if not output.generationNotes:
             output.generationNotes = ["Generated through the configured AI provider and validated against the architecture schema."]
         return output

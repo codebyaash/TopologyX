@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from app.services.ai.client import AIRequestError
-from app.services.architecture.generator import build_deterministic_architecture, generate_architecture
+from app.services.architecture.generator import architecture_is_consistent, build_deterministic_architecture, generate_architecture
 
 
 PROMPT = "Design a CRM platform for sales and customer success with tenant isolation, lead ingestion, workflow automation, reporting dashboards, audit logs, and role-based access."
@@ -46,12 +46,31 @@ class ArchitectureGeneratorTestCase(unittest.TestCase):
         self.assertIn("AI generation was configured but unavailable or invalid", output.generationNotes[0])
         self.assertIn("Returned to the deterministic architecture engine", output.generationNotes[1])
 
+    def test_generate_architecture_falls_back_when_ai_output_is_internally_inconsistent(self) -> None:
+        baseline = build_deterministic_architecture(PROMPT)
+        ai_candidate = baseline.model_copy(deep=True)
+        ai_candidate.generationSource = "ai"
+        ai_candidate.costEstimate.monthlyUsd = ai_candidate.costEstimate.monthlyUsd + 999
+
+        with patch("app.services.architecture.generator.is_ai_configured", return_value=True), patch(
+            "app.services.architecture.generator.complete_json",
+            return_value=ai_candidate.model_dump(),
+        ):
+            output = generate_architecture(PROMPT)
+
+        self.assertEqual(output.generationSource, "deterministic")
+        self.assertIn("AI generation was configured but unavailable or invalid", output.generationNotes[0])
+
     def test_healthcare_prompt_gets_healthcare_security_pack(self) -> None:
         output = generate_architecture(
             "Design a HIPAA-compliant EHR platform handling 1M requests/day with private patient records, audit logging, backups, and secure provider access."
         )
         self.assertIn("HIPAA", output.securityProfile.compliancePacks)
         self.assertIn("PHI Handling", output.securityProfile.compliancePacks)
+
+    def test_deterministic_output_passes_internal_consistency_checks(self) -> None:
+        output = build_deterministic_architecture(PROMPT)
+        self.assertTrue(architecture_is_consistent(output))
 
 
 if __name__ == "__main__":

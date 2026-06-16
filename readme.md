@@ -33,6 +33,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -100,6 +101,18 @@ This currently covers:
 - save-on-generate history flow
 - deterministic generation
 - AI success and AI fallback behavior
+
+## Database Migrations
+
+The API now includes Alembic migration scaffolding and an initial schema migration.
+
+From `apps/api`:
+
+```bash
+alembic upgrade head
+```
+
+For quick local iteration, `.env.example` keeps `AUTO_CREATE_TABLES=true`, but migrations are the preferred path for managed environments.
 
 ## MVP Scenarios
 

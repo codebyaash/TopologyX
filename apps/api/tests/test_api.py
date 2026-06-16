@@ -57,6 +57,14 @@ class ArchitectureApiTestCase(unittest.TestCase):
             json={
                 "prompt": "Design an insurance claims processing workflow with FNOL intake, document uploads, fraud checks, adjuster assignment, policy lookup, secure customer communications, and payout approvals.",
                 "projectId": project["id"],
+                "runContext": {
+                    "recommendationKey": "recommendation2",
+                    "recommendationLabel": "Recommendation 2",
+                    "recommendationDescription": "Cost-leaning alternative using the first substitute where available.",
+                    "trafficProfile": "growth",
+                    "regionCount": 2,
+                    "observabilityDepth": "deep",
+                },
             },
         )
         self.assertEqual(generate_response.status_code, 200, generate_response.text)
@@ -77,6 +85,8 @@ class ArchitectureApiTestCase(unittest.TestCase):
         self.assertEqual(len(detail["history"]), 1)
         self.assertEqual(detail["history"][0]["prompt"], "Design an insurance claims processing workflow with FNOL intake, document uploads, fraud checks, adjuster assignment, policy lookup, secure customer communications, and payout approvals.")
         self.assertEqual(detail["history"][0]["output"]["generationSource"], "deterministic")
+        self.assertEqual(detail["history"][0]["runContext"]["recommendationKey"], "recommendation2")
+        self.assertEqual(detail["history"][0]["runContext"]["regionCount"], 2)
 
     def test_project_endpoints_require_authentication(self) -> None:
         unauthenticated_client = TestClient(app)

@@ -21,6 +21,7 @@ from app.schemas.architecture import (
     ProjectCreate,
     ProjectDetail,
     ProjectSummary,
+    RunContext,
     SavedArchitectureRun,
 )
 from app.services.architecture.generator import generate_architecture
@@ -29,17 +30,38 @@ router = APIRouter()
 
 
 def _serialize_run(request_row: ArchitectureRequestModel, output_row: ArchitectureOutputModel) -> SavedArchitectureRun:
+    run_context = None
+    if request_row.recommendation_key and request_row.recommendation_label and request_row.recommendation_description and request_row.traffic_profile and request_row.region_count and request_row.observability_depth:
+        run_context = RunContext(
+            recommendationKey=request_row.recommendation_key,
+            recommendationLabel=request_row.recommendation_label,
+            recommendationDescription=request_row.recommendation_description,
+            trafficProfile=request_row.traffic_profile,
+            regionCount=request_row.region_count,
+            observabilityDepth=request_row.observability_depth,
+        )
+
     return SavedArchitectureRun(
         id=request_row.id,
         projectId=request_row.project_id,
         prompt=request_row.prompt,
         createdAt=request_row.created_at,
         output=ArchitectureOutput.model_validate_json(output_row.raw_json),
+        runContext=run_context,
     )
 
 
-def _persist_generation(db: Session, project_id: int, prompt: str, output: ArchitectureOutput) -> None:
-    request_row = ArchitectureRequestModel(project_id=project_id, prompt=prompt)
+def _persist_generation(db: Session, project_id: int, prompt: str, output: ArchitectureOutput, run_context: RunContext | None = None) -> None:
+    request_row = ArchitectureRequestModel(
+        project_id=project_id,
+        prompt=prompt,
+        recommendation_key=run_context.recommendationKey if run_context else None,
+        recommendation_label=run_context.recommendationLabel if run_context else None,
+        recommendation_description=run_context.recommendationDescription if run_context else None,
+        traffic_profile=run_context.trafficProfile if run_context else None,
+        region_count=run_context.regionCount if run_context else None,
+        observability_depth=run_context.observabilityDepth if run_context else None,
+    )
     db.add(request_row)
     db.flush()
 
@@ -182,5 +204,5 @@ def generate(
         project = db.query(Project).filter(Project.id == request.projectId, Project.user_id == user.id).first()
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        _persist_generation(db, request.projectId, request.prompt, output)
+        _persist_generation(db, request.projectId, request.prompt, output, request.runContext)
     return output

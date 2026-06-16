@@ -34,6 +34,12 @@ class ArchitectureRequest(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
     prompt: Mapped[str] = mapped_column(Text)
+    recommendation_key: Mapped[Optional[str]] = mapped_column(String(32))
+    recommendation_label: Mapped[Optional[str]] = mapped_column(String(80))
+    recommendation_description: Mapped[Optional[str]] = mapped_column(Text)
+    traffic_profile: Mapped[Optional[str]] = mapped_column(String(20))
+    region_count: Mapped[Optional[int]] = mapped_column(Integer)
+    observability_depth: Mapped[Optional[str]] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

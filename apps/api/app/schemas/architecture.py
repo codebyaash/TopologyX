@@ -10,9 +10,19 @@ Pillar = Literal["Reliability", "Security", "Cost optimization", "Operational ex
 GenerationSource = Literal["deterministic", "ai"]
 
 
+class RunContext(BaseModel):
+    recommendationKey: Literal["recommendation1", "recommendation2", "recommendation3"]
+    recommendationLabel: str
+    recommendationDescription: str
+    trafficProfile: Literal["steady", "growth", "burst"]
+    regionCount: int = Field(ge=1, le=6)
+    observabilityDepth: Literal["lean", "standard", "deep"]
+
+
 class ArchitectureRequest(BaseModel):
     prompt: str = Field(min_length=12)
     projectId: Optional[int] = None
+    runContext: Optional[RunContext] = None
 
 
 class ServiceAlternative(BaseModel):
@@ -153,6 +163,7 @@ class SavedArchitectureRun(BaseModel):
     prompt: str
     createdAt: datetime
     output: ArchitectureOutput
+    runContext: Optional[RunContext] = None
 
 
 class ProjectDetail(ProjectSummary):

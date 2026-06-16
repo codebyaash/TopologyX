@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { toPng } from "html-to-image";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, { Background, Controls, Handle, MiniMap, Position, type NodeProps } from "reactflow";
@@ -13,9 +14,10 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { generateArchitecture } from "@/lib/architecture-engine";
+import { buildAdjustedCostItems, buildRecommendationProfiles, formatObservabilityDepthLabel, formatTrafficProfileLabel, resolveRunContext } from "@/lib/recommendations";
 import { sampleScenarios } from "@/lib/samples";
-import type { ArchitectureOutput, AuthUser, ProjectDetail, ProjectSummary, Severity } from "@/lib/types";
-import { architectureToMarkdown, createAndSaveArchitecture, createProject, downloadText, getCurrentUser, getProject, listProjects, login, logout, register } from "@/services/architecture";
+import type { ArchitectureOutput, AuthUser, ObservabilityDepth, ProjectDetail, ProjectSummary, RecommendationKey, RunContext, Severity, TrafficProfile } from "@/lib/types";
+import { architectureToMarkdown, createAndSaveArchitectureWithContext, createProject, downloadArchitectureBundle, downloadText, getCurrentUser, getProject, listProjects, login, logout, register } from "@/services/architecture";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
@@ -38,17 +40,6 @@ const shellCardClassName = "border-slate-200/80 bg-white/82 shadow-[0_20px_60px_
 const mutedPanelClassName = "rounded-lg border border-slate-200/80 bg-slate-50/90";
 const selectClassName =
   "h-10 rounded-md border border-slate-200/80 bg-white/80 px-3 text-sm text-slate-800 outline-none transition focus-visible:ring-2 focus-visible:ring-ring";
-type RecommendationKey = "recommendation1" | "recommendation2" | "recommendation3";
-type TrafficProfile = "steady" | "growth" | "burst";
-type ObservabilityDepth = "lean" | "standard" | "deep";
-type ProfileService = ArchitectureOutput["services"][number];
-type RecommendationProfile = {
-  key: RecommendationKey;
-  label: string;
-  description: string;
-  services: ProfileService[];
-  totalMonthlyUsd: number;
-};
 
 function diagramNodeTone(label: string) {
   const text = label.toLowerCase();
@@ -157,92 +148,9 @@ function formatCostDelta(current: number, alternative: number) {
   return diff > 0 ? `$${diff.toLocaleString()} more` : `$${Math.abs(diff).toLocaleString()} less`;
 }
 
-function buildRecommendationProfiles(output: ArchitectureOutput): RecommendationProfile[] {
-  const baseTotal = output.services.reduce((sum, service) => sum + service.estimatedMonthlyUsd, 0);
-  const multiplier = baseTotal > 0 ? output.costEstimate.monthlyUsd / baseTotal : 1;
-  const scaledCost = (value: number) => Math.round(value * multiplier);
-
-  return [
-    {
-      key: "recommendation1",
-      label: "Recommendation 1",
-      description: "Balanced default for the current workload.",
-      services: output.services.map((service) => ({
-        ...service,
-        estimatedMonthlyUsd: scaledCost(service.estimatedMonthlyUsd)
-      })),
-      totalMonthlyUsd: output.costEstimate.monthlyUsd
-    },
-    {
-      key: "recommendation2",
-      label: "Recommendation 2",
-      description: "Cost-leaning alternative using the first substitute where available.",
-      services: output.services.map((service) => {
-        const option = service.alternatives[0];
-        return option
-          ? {
-              ...service,
-              name: option.name,
-              tier: option.tier,
-              justification: option.justification,
-              estimatedMonthlyUsd: scaledCost(option.estimatedMonthlyUsd)
-            }
-          : {
-              ...service,
-              estimatedMonthlyUsd: scaledCost(service.estimatedMonthlyUsd)
-            };
-      }),
-      totalMonthlyUsd: output.services.reduce((sum, service) => sum + scaledCost(service.alternatives[0]?.estimatedMonthlyUsd ?? service.estimatedMonthlyUsd), 0)
-    },
-    {
-      key: "recommendation3",
-      label: "Recommendation 3",
-      description: "Second alternative path with a different operational tradeoff profile.",
-      services: output.services.map((service) => {
-        const option = service.alternatives[1];
-        return option
-          ? {
-              ...service,
-              name: option.name,
-              tier: option.tier,
-              justification: option.justification,
-              estimatedMonthlyUsd: scaledCost(option.estimatedMonthlyUsd)
-            }
-          : {
-              ...service,
-              estimatedMonthlyUsd: scaledCost(service.estimatedMonthlyUsd)
-            };
-      }),
-      totalMonthlyUsd: output.services.reduce((sum, service) => sum + scaledCost(service.alternatives[1]?.estimatedMonthlyUsd ?? service.estimatedMonthlyUsd), 0)
-    }
-  ];
-}
-
-function serviceMultiplier(service: string, trafficProfile: TrafficProfile, regionCount: number, observabilityDepth: ObservabilityDepth) {
-  const normalized = service.toLowerCase();
-  let multiplier = 1;
-
-  if (normalized.includes("front door") || normalized.includes("api") || normalized.includes("functions") || normalized.includes("service bus")) {
-    multiplier *= trafficProfile === "burst" ? 1.45 : trafficProfile === "growth" ? 1.2 : 1;
-  }
-
-  if (normalized.includes("sql") || normalized.includes("storage") || normalized.includes("private endpoint") || normalized.includes("virtual network")) {
-    multiplier *= 1 + (regionCount - 1) * 0.32;
-  }
-
-  if (normalized.includes("monitor") || normalized.includes("insights")) {
-    multiplier *= observabilityDepth === "deep" ? 1.7 : observabilityDepth === "standard" ? 1.15 : 0.8;
-  }
-
-  if (normalized.includes("defender")) {
-    multiplier *= regionCount > 1 ? 1.15 : 1;
-  }
-
-  return multiplier;
-}
-
 export function ArchitectureCopilot() {
   const apiEnabled = Boolean(process.env.NEXT_PUBLIC_API_URL);
+  const searchParams = useSearchParams();
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [output, setOutput] = useState<ArchitectureOutput>(() => generateArchitecture(defaultPrompt));
   const [isLoading, setIsLoading] = useState(false);
@@ -265,6 +173,7 @@ export function ArchitectureCopilot() {
   const [trafficProfile, setTrafficProfile] = useState<TrafficProfile>("steady");
   const [regionCount, setRegionCount] = useState(1);
   const [observabilityDepth, setObservabilityDepth] = useState<ObservabilityDepth>("standard");
+  const [handledDeepLinkKey, setHandledDeepLinkKey] = useState<string | null>(null);
   const diagramRef = useRef<HTMLDivElement | null>(null);
 
   const criticalCount = useMemo(() => output.securityFindings.filter((item) => item.severity === "Critical" || item.severity === "High").length, [output]);
@@ -285,11 +194,15 @@ export function ArchitectureCopilot() {
   );
   const adjustedCostItems = useMemo(
     () =>
-      activeCostItems.map((item) => ({
-        ...item,
-        monthlyUsd: Math.round(item.monthlyUsd * serviceMultiplier(item.service, trafficProfile, regionCount, observabilityDepth))
-      })),
-    [activeCostItems, observabilityDepth, regionCount, trafficProfile]
+      buildAdjustedCostItems(activeProfile, {
+        recommendationKey,
+        recommendationLabel: activeProfile.label,
+        recommendationDescription: activeProfile.description,
+        trafficProfile,
+        regionCount,
+        observabilityDepth
+      }),
+    [activeProfile, observabilityDepth, recommendationKey, regionCount, trafficProfile]
   );
   const adjustedMonthlyTotal = useMemo(() => adjustedCostItems.reduce((sum, item) => sum + item.monthlyUsd, 0), [adjustedCostItems]);
   const baselineMonthlyTotal = useMemo(() => activeCostItems.reduce((sum, item) => sum + item.monthlyUsd, 0), [activeCostItems]);
@@ -331,6 +244,21 @@ export function ArchitectureCopilot() {
     }
   }, [selectedProjectId]);
 
+  function applyRunContext(runContext?: RunContext | null) {
+    if (!runContext) {
+      setRecommendationKey("recommendation1");
+      setTrafficProfile("steady");
+      setRegionCount(1);
+      setObservabilityDepth("standard");
+      return;
+    }
+
+    setRecommendationKey(runContext.recommendationKey);
+    setTrafficProfile(runContext.trafficProfile);
+    setRegionCount(runContext.regionCount);
+    setObservabilityDepth(runContext.observabilityDepth);
+  }
+
   useEffect(() => {
     if (!apiEnabled) {
       return;
@@ -349,14 +277,68 @@ export function ArchitectureCopilot() {
     })();
   }, [apiEnabled, refreshProjects]);
 
+  useEffect(() => {
+    if (!apiEnabled || !currentUser) {
+      return;
+    }
+
+    const rawProjectId = searchParams.get("projectId");
+    const rawRunId = searchParams.get("runId");
+    if (!rawProjectId) {
+      return;
+    }
+
+    const projectId = Number(rawProjectId);
+    const runId = rawRunId ? Number(rawRunId) : undefined;
+    if (!Number.isFinite(projectId) || (rawRunId && !Number.isFinite(runId))) {
+      return;
+    }
+
+    const deepLinkKey = `${projectId}:${runId ?? "latest"}`;
+    if (handledDeepLinkKey === deepLinkKey) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const project = await getProject(projectId);
+        setActiveProject(project);
+        setSelectedProjectId(project.id);
+        setProjects((current) => (current.some((item) => item.id === project.id) ? current : [...current, project]));
+
+        const run = runId ? project.history.find((item) => item.id === runId) : project.history[0];
+        if (run) {
+          setPrompt(run.prompt);
+          setOutput(run.output);
+          applyRunContext(run.runContext);
+          setShowComparison(false);
+          setProjectStatus(`Loaded ${project.name} run ${run.id} from the projects workspace.`);
+        } else {
+          setProjectStatus(`Loaded project "${project.name}". No matching saved run was found.`);
+        }
+        setHandledDeepLinkKey(deepLinkKey);
+      } catch (error) {
+        setProjectError(error instanceof Error ? error.message : "Unable to load the requested saved run.");
+        setHandledDeepLinkKey(deepLinkKey);
+      }
+    })();
+  }, [apiEnabled, currentUser, handledDeepLinkKey, searchParams]);
+
   async function handleGenerate() {
     setIsLoading(true);
     setProjectError(null);
 
     try {
-      const next = await createAndSaveArchitecture(prompt, selectedProjectId === "" ? undefined : selectedProjectId);
+      const next = await createAndSaveArchitectureWithContext(prompt, {
+        projectId: selectedProjectId === "" ? undefined : selectedProjectId,
+        recommendationKey,
+        recommendationLabel: activeProfile.label,
+        recommendationDescription: activeProfile.description,
+        trafficProfile,
+        regionCount,
+        observabilityDepth
+      });
       setOutput(next);
-      setRecommendationKey("recommendation1");
       setShowComparison(false);
       setProjectStatus(selectedProjectId === "" ? "Generated in preview mode." : "Architecture generated and saved to the selected project.");
 
@@ -428,7 +410,7 @@ export function ArchitectureCopilot() {
     }
     setPrompt(match.prompt);
     setOutput(match.output);
-    setRecommendationKey("recommendation1");
+    applyRunContext(match.runContext);
     setShowComparison(false);
     setProjectStatus(`Loaded saved run from ${new Date(match.createdAt).toLocaleString()}.`);
   }
@@ -513,6 +495,10 @@ export function ArchitectureCopilot() {
               <ArrowLeft className="h-4 w-4" />
               Overview
             </Link>
+            <Link href="/projects" className={ghostLinkClassName}>
+              <FolderKanban className="h-4 w-4" />
+              Projects
+            </Link>
             <Button
               variant="outline"
               onClick={() =>
@@ -536,6 +522,42 @@ export function ArchitectureCopilot() {
             <Button variant="outline" onClick={() => downloadText(codeKind === "bicep" ? "main.bicep" : "main.tf", code)}>
               <FileCode2 className="h-4 w-4" />
               IaC
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                void downloadArchitectureBundle("architecture-bundle", {
+                  ...output,
+                  services: activeProfile.services,
+                  costEstimate: {
+                    ...output.costEstimate,
+                    monthlyUsd: adjustedMonthlyTotal,
+                    items: adjustedCostItems,
+                  },
+                }, {
+                  selectedRecommendationLabel: activeProfile.label,
+                  selectedRecommendationDescription: activeProfile.description,
+                  scenario: {
+                    trafficProfile,
+                    regionCount,
+                    observabilityDepth
+                  },
+                  comparisonProfiles: recommendationProfiles.map((profile) => ({
+                    label: profile.label,
+                    description: profile.description,
+                    totalMonthlyUsd: profile.totalMonthlyUsd,
+                    services: profile.services.map((service) => ({
+                      name: service.name,
+                      tier: service.tier,
+                      estimatedMonthlyUsd: service.estimatedMonthlyUsd,
+                      justification: service.justification
+                    }))
+                  }))
+                })
+              }
+            >
+              <Braces className="h-4 w-4" />
+              Bundle
             </Button>
           </div>
         </div>
@@ -673,19 +695,28 @@ export function ArchitectureCopilot() {
               ) : !currentUser ? (
                 <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3 text-sm text-slate-600">Sign in to unlock per-user project history.</div>
               ) : activeProject && activeProject.history.length > 0 ? (
-                activeProject.history.slice(0, 6).map((item) => (
-                  <button
-                    key={item.id}
-                    className="w-full rounded-md border border-slate-200/80 bg-white/75 p-3 text-left transition hover:border-primary hover:bg-primary/5"
-                    onClick={() => loadHistoryRun(activeProject, item.id)}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-slate-900">{new Date(item.createdAt).toLocaleString()}</span>
-                      <Badge variant="outline">Run {item.id}</Badge>
-                    </div>
-                    <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{item.prompt}</p>
-                  </button>
-                ))
+                activeProject.history.slice(0, 6).map((item) => {
+                  const runContext = resolveRunContext(item.runContext);
+                  return (
+                    <button
+                      key={item.id}
+                      className="w-full rounded-md border border-slate-200/80 bg-white/75 p-3 text-left transition hover:border-primary hover:bg-primary/5"
+                      onClick={() => loadHistoryRun(activeProject, item.id)}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-medium text-slate-900">{new Date(item.createdAt).toLocaleString()}</span>
+                        <Badge variant="outline">Run {item.id}</Badge>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <Badge variant="secondary">{runContext.recommendationLabel}</Badge>
+                        <Badge variant="outline">{formatTrafficProfileLabel(runContext.trafficProfile)}</Badge>
+                        <Badge variant="outline">{runContext.regionCount} region{runContext.regionCount > 1 ? "s" : ""}</Badge>
+                        <Badge variant="outline">{formatObservabilityDepthLabel(runContext.observabilityDepth)}</Badge>
+                      </div>
+                      <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{item.prompt}</p>
+                    </button>
+                  );
+                })
               ) : (
                 <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3 text-sm text-slate-600">
                   {selectedProjectId === "" ? "Choose or create a project to build history." : "No saved runs yet for this project."}
