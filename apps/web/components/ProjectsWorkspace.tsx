@@ -308,7 +308,7 @@ export function ProjectsWorkspace() {
             <CardContent className="space-y-4">
               {!apiEnabled ? (
                 <div className="rounded-lg border border-dashed border-slate-200/80 bg-slate-50/80 p-3 text-sm text-slate-600">
-                  Set `NEXT_PUBLIC_API_URL` to enable projects, saved history, and account-backed workflows.
+                  Connect the backend API to enable projects, saved history, and account-backed workflows.
                 </div>
               ) : !currentUser ? (
                 <>

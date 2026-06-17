@@ -4,9 +4,18 @@ services:
     runtime: python
     plan: free
     rootDir: apps/api
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && alembic upgrade head
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
         sync: false
-
+      - key: SESSION_SECRET
+        sync: false
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: SESSION_COOKIE_SAMESITE
+        value: "lax"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: AUTO_CREATE_TABLES
+        value: "false"

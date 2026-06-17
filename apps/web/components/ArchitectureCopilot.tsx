@@ -691,7 +691,9 @@ export function ArchitectureCopilot() {
             </CardHeader>
             <CardContent className="space-y-3">
               {!apiEnabled ? (
-                <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3 text-sm text-slate-600">History appears here when the API-backed project flow is enabled.</div>
+                <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3 text-sm text-slate-600">
+                  Connect the backend API to unlock project history, saved runs, and reopenable architecture sessions.
+                </div>
               ) : !currentUser ? (
                 <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3 text-sm text-slate-600">Sign in to unlock per-user project history.</div>
               ) : activeProject && activeProject.history.length > 0 ? (

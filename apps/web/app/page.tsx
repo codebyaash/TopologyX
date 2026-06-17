@@ -36,6 +36,11 @@ export default function Home() {
       <section className="border-b border-border/70">
         <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
           <div className="space-y-6">
+            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/70 px-3 py-2 text-sm font-medium text-slate-700">
+              <span className="text-slate-900">TopologyX</span>
+              <span className="text-slate-400">•</span>
+              <span>AI Architecture Copilot</span>
+            </div>
             <Badge variant="outline" className="bg-background/70">Azure architecture copilot</Badge>
             <div className="space-y-4">
               <h1 className="max-w-3xl text-4xl font-semibold tracking-normal text-slate-900 sm:text-5xl">
