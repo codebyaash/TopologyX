@@ -18,6 +18,12 @@ It now supports:
 - `apps/web` - Next.js, TypeScript, Tailwind CSS, shadcn-style components, React Flow, Monaco Editor.
 - `apps/api` - FastAPI service with modular architecture, security, cost, and IaC generators.
 
+## Product screenshot
+
+![Generated Azure architecture diagram](docs/screenshots/topologyx-architecture-diagram.png)
+
+Exported from the local deterministic preview for the HIPAA EHR example scenario.
+
 ## Quick Start
 
 ```bash
