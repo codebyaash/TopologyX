@@ -18,11 +18,15 @@ It now supports:
 - `apps/web` - Next.js, TypeScript, Tailwind CSS, shadcn-style components, React Flow, Monaco Editor.
 - `apps/api` - FastAPI service with modular architecture, security, cost, and IaC generators.
 
-## Product screenshot
+## Product screenshots
 
-![Generated Azure architecture diagram](docs/screenshots/topologyx-architecture-diagram.png)
+The following local deterministic-preview captures show the main review flow for the HIPAA EHR example:
 
-Exported from the local deterministic preview for the HIPAA EHR example scenario.
+| Overview | Generated topology |
+| --- | --- |
+| ![Landing overview with recommended Azure services](docs/screenshots/topologyx-overview.png) | ![Generated Azure architecture topology](docs/screenshots/topologyx-generator-diagram.png) |
+| Security review | Infrastructure as Code |
+| ![Rules-based HIPAA security review](docs/screenshots/topologyx-security-review.png) | ![Bicep and Terraform module structure](docs/screenshots/topologyx-iac-output.png) |
 
 ## Quick Start
 
